@@ -1,0 +1,705 @@
+{% comment %}
+  MIGRATION CALCULATOR SECTION
+  ------------------------------------------------------------------------------
+  Sección personalizada para calcular costes de migración.
+  Incluye sliders interactivos y envío mediante formulario nativo de Shopify.
+  + EXTRAS: Geolocalización, conversión de moneda, y incremento por país
+{% endcomment %}
+
+{% # Importacion de assets %}
+{{ 'migration-calculator.css' | asset_url | stylesheet_tag }}
+
+<div class="page-width section-migration-calculator">
+  <div class="calculator-wrapper">
+    
+    <!-- CABECERA -->
+    <div class="calculator-header">
+      <h2>{{ section.settings.heading }}</h2>
+      <p>{{ section.settings.subheading }}</p>
+    </div>
+
+    <div class="calculator-grid">
+      <!-- COLUMNA IZQUIERDA: SLIDERS -->
+      <div class="sliders-container">
+        
+        <!-- Slider 1: Clientes -->
+        <div class="slider-group">
+          <div class="slider-label">
+            <label>{{ section.settings.label_customers }}</label>
+            <span id="display-customers" class="slider-value">{{ section.settings.default_customers }}</span>
+          </div>
+          <input 
+            type="range" 
+            id="range-customers" 
+            min="{{ section.settings.min_customers }}" 
+            max="{{ section.settings.max_customers }}" 
+            step="{{ section.settings.step_customers }}" 
+            value="{{ section.settings.default_customers }}" 
+            class="calculator-range">
+        </div>
+
+        <!-- Slider 2: Pedidos -->
+        <div class="slider-group">
+          <div class="slider-label">
+            <label>{{ section.settings.label_orders }}</label>
+            <span id="display-orders" class="slider-value">{{ section.settings.default_orders }}</span>
+          </div>
+          <input 
+            type="range" 
+            id="range-orders" 
+            min="{{ section.settings.min_orders }}" 
+            max="{{ section.settings.max_orders }}" 
+            step="{{ section.settings.step_orders }}" 
+            value="{{ section.settings.default_orders }}" 
+            class="calculator-range">
+        </div>
+
+        <!-- Slider 3: Productos -->
+        <div class="slider-group">
+          <div class="slider-label">
+            <label>{{ section.settings.label_products }}</label>
+            <span id="display-products" class="slider-value">{{ section.settings.default_products }}</span>
+          </div>
+          <input 
+            type="range" 
+            id="range-products" 
+            min="{{ section.settings.min_products }}" 
+            max="{{ section.settings.max_products }}" 
+            step="{{ section.settings.step_products }}" 
+            value="{{ section.settings.default_products }}" 
+            class="calculator-range">
+        </div>
+
+        <!-- CAJA DE PRECIO -->
+        <div class="price-box">
+          <h3>Precio Estimado:</h3>
+          <div id="final-price" class="price-amount">--- €</div>
+          <p id="price-note" class="price-note"></p>
+          <p id="custom-msg" class="custom-quote-msg">{{ section.settings.custom_msg_text }}</p>
+        </div>
+      </div>
+
+      <!-- COLUMNA DERECHA: FORMULARIO -->
+      <div class="form-container">
+        {% form 'contact' %}
+          {% if form.posted_successfully? %}
+            <div class="form-success-message">
+              <h3>¡Solicitud Recibida!</h3>
+              <p id="success-message-text">{{ section.settings.success_message_with_price }}</p>
+            </div>
+          {% else %}
+            {{ form.errors | default_errors }}
+            
+            <div class="form-field">
+              <label for="ContactEmail">Email *</label>
+              <input type="email" id="ContactEmail" name="contact[email]" placeholder="tu@email.com" required>
+            </div>
+            
+            <div class="form-field">
+              <label for="ContactPhone">Teléfono *</label>
+              <div class="phone-group">
+                <input type="text" id="ContactPhonePrefix" name="contact[phone_prefix]" value="+" placeholder="+34" required>
+                <input type="tel" id="ContactPhone" name="contact[phone]" placeholder="600 000 000" required>
+              </div>
+            </div>
+            
+            <div class="form-field">
+              <label for="ContactWebsite">Web Actual *</label>
+              <input type="text" id="ContactWebsite" name="contact[website]" placeholder="www.mitienda.com" required>
+            </div>
+            
+            <div class="form-field">
+              <label for="ContactCMS">CMS Actual *</label>
+              <select id="ContactCMS" name="contact[cms]" required>
+                <option value="" disabled selected>Selecciona una plataforma</option>
+                <option value="Magento">Magento</option>
+                <option value="WooCommerce">WooCommerce</option>
+                <option value="Wix">Wix</option>
+                <option value="OpenCart">OpenCart</option>
+                <option value="PrestaShop">PrestaShop</option>
+                <option value="Shopify">Shopify</option>
+                <option value="BigCommerce">BigCommerce</option>
+                <option value="Squarespace">Squarespace</option>
+                <option value="Webflow">Webflow</option>
+                <option value="Custom / Headless">Custom / Headless</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+
+            <!-- INPUTS OCULTOS -->
+            <input type="hidden" name="contact[Customers_Count]" id="hidden-customers">
+            <input type="hidden" name="contact[Orders_Count]" id="hidden-orders">
+            <input type="hidden" name="contact[Products_Count]" id="hidden-products">
+            <input type="hidden" name="contact[Estimated_Price]" id="hidden-price">
+            <input type="hidden" name="contact[Is_Custom_Quote]" id="hidden-is-custom" value="false">
+            <input type="hidden" name="contact[User_Country]" id="hidden-country">
+            <input type="hidden" name="contact[Price_In_Local_Currency]" id="hidden-local-price">
+
+            <div id="calculator-form-error">
+              Por favor, completa todos los campos obligatorios.
+            </div>
+
+            <button type="submit" id="calculator-submit-btn" class="button button--primary full-width">
+              {{ section.settings.button_text }}
+            </button>
+          {% endif %}
+        {% endform %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- LÓGICA JAVASCRIPT -->
+<script>
+  (function() {
+    
+    // Price Tiers Configuration
+    var pricingTiers = [
+      {% for block in section.blocks %}
+        {% if block.type == 'price_tier' %}
+        {
+          limit: {{ block.settings.limit | default: 0 }},
+          price: {{ block.settings.price | default: 0 }}
+        }{% unless forloop.last %},{% endunless %}
+        {% endif %}
+      {% endfor %}
+    ];
+    pricingTiers.sort(function(a, b) { return a.limit - b.limit; });
+
+    // Currency and Country Rates
+    var conversionRates = {
+      'USD': 1.10,
+      'GBP': 0.85,
+      'CAD': 1.45,
+      'AUD': 1.65,
+      'MXN': 22.50,
+      'EUR': 1.00
+    };
+
+    var currencySymbols = {
+      'EUR': '€',
+      'USD': '$',
+      'GBP': '£',
+      'CAD': 'CAD $',
+      'AUD': 'AUD $',
+      'MXN': 'MX$'
+    };
+
+    var countryToCurrency = {
+      'US': 'USD',
+      'GB': 'GBP',
+      'CA': 'CAD',
+      'AU': 'AUD',
+      'MX': 'MXN',
+      'ES': 'EUR',
+      'FR': 'EUR',
+      'DE': 'EUR',
+      'IT': 'EUR',
+      'PT': 'EUR'
+    };
+
+    // Country Adjustments
+
+    var countryPriceAdjustments = [
+      {% for block in section.blocks %}
+        {% if block.type == 'country_adjustment' %}
+        {
+          countryCode: "{{ block.settings.countrycode | default: 'US' }}",
+          adjustment: {{ block.settings.priceadjustment | default: 0 }},
+          currency: "{{ block.settings.currency | default: 'USD' }}"
+        }{% unless forloop.last %},{% endunless %}
+        {% endif %}
+      {% endfor %}
+    ];
+
+    // User Country Detection
+    var userCountry = 'ES'; // Default Spain
+    var userCurrency = 'EUR';
+    var priceMultiplier = 1.0;
+
+    if (typeof Shopify !== 'undefined' && Shopify.country) {
+      userCountry = Shopify.country;
+    }
+
+    // Find custom adjustment for country
+    var countryConfig = null;
+    for (var i = 0; i < countryPriceAdjustments.length; i++) {
+      if (countryPriceAdjustments[i].countryCode === userCountry) {
+        countryConfig = countryPriceAdjustments[i];
+        break;
+      }
+    }
+
+    if (countryConfig) {
+      priceMultiplier = 1 + (countryConfig.adjustment / 100);
+      userCurrency = countryConfig.currency;
+    } else {
+      userCurrency = countryToCurrency[userCountry] || 'EUR';
+    }
+
+    // DOM Elements
+
+    var inputs = {
+      customers: document.getElementById('range-customers'),
+      orders: document.getElementById('range-orders'),
+      products: document.getElementById('range-products')
+    };
+
+    var displays = {
+      customers: document.getElementById('display-customers'),
+      orders: document.getElementById('display-orders'),
+      products: document.getElementById('display-products'),
+      price: document.getElementById('final-price'),
+      msg: document.getElementById('custom-msg'),
+      note: document.getElementById('price-note')
+    };
+
+    var hidden = {
+      customers: document.getElementById('hidden-customers'),
+      orders: document.getElementById('hidden-orders'),
+      products: document.getElementById('hidden-products'),
+      price: document.getElementById('hidden-price'),
+      country: document.getElementById('hidden-country'),
+      localPrice: document.getElementById('hidden-local-price')
+    };
+
+    // Validation
+    if (!inputs.customers || !displays.price) {
+      return;
+    }
+
+    // Guardar país en hidden field
+    if (hidden.country) hidden.country.value = userCountry;
+
+    // Main Calculation Function
+
+    function calculate() {
+      var vCust = parseInt(inputs.customers.value) || 0;
+      var vOrd = parseInt(inputs.orders.value) || 0;
+      var vProd = parseInt(inputs.products.value) || 0;
+
+      // Actualizar displays
+      displays.customers.innerText = vCust.toLocaleString();
+      displays.orders.innerText = vOrd.toLocaleString();
+      displays.products.innerText = vProd.toLocaleString();
+
+      // Actualizar hidden fields
+      if (hidden.customers) hidden.customers.value = vCust;
+      if (hidden.orders) hidden.orders.value = vOrd;
+      if (hidden.products) hidden.products.value = vProd;
+
+      // Calcular precio base en EUR
+      var maxVal = Math.max(vCust, vOrd, vProd);
+      var priceFound = null;
+
+      for (var i = 0; i < pricingTiers.length; i++) {
+        if (maxVal <= pricingTiers[i].limit) {
+          priceFound = pricingTiers[i].price;
+          break;
+        }
+      }
+
+      if (priceFound !== null) {
+        // Aplicar ajuste por país
+        var adjustedPrice = Math.round(priceFound * priceMultiplier);
+        
+        // Convertir a moneda local
+        var conversionRate = conversionRates[userCurrency] || 1;
+        var localPrice = Math.round(adjustedPrice * conversionRate);
+
+        // Obtener símbolo de moneda
+        var currencySymbol = currencySymbols[userCurrency] || userCurrency;
+
+        // Mostrar precio
+        displays.price.innerText = localPrice.toLocaleString() + ' ' + currencySymbol;
+        if (displays.msg) displays.msg.style.display = 'none';
+
+        if (displays.note) {
+          displays.note.style.display = 'none';
+        }
+
+
+        // Hidden fields
+        if (hidden.price) hidden.price.value = adjustedPrice + " EUR (Base: " + priceFound + " EUR)";
+        if (hidden.localPrice) hidden.localPrice.value = localPrice + " " + userCurrency;
+
+      } else {
+        // Custom quote
+        displays.price.innerText = "";
+        if (displays.msg) displays.msg.style.display = 'block';
+        if (displays.note) displays.note.style.display = 'none';
+        if (hidden.price) hidden.price.value = "Custom Quote (Over Limit)";
+        if (hidden.localPrice) hidden.localPrice.value = "Custom Quote";
+      }
+
+    }
+
+    // Event Listeners
+    inputs.customers.addEventListener('input', calculate);
+    inputs.orders.addEventListener('input', calculate);
+    inputs.products.addEventListener('input', calculate);
+
+    // Form Validation & AJAX Submission
+
+    var formElement = document.querySelector('form[action^="/contact"]');
+    var submitButton = document.getElementById('calculator-submit-btn');
+    var errorMessage = document.getElementById('calculator-form-error');
+    var formContainer = document.querySelector('.form-container');
+
+    if (formElement) {
+      formElement.addEventListener('submit', function(e) {
+        e.preventDefault(); // Stop native reload
+
+        var formFields = document.querySelectorAll('.form-field input[required], .form-field select[required]');
+        var isValid = true;
+        
+        // Client-side validation
+        formFields.forEach(function(field) {
+            if (!field.value) {
+                isValid = false;
+                field.style.borderColor = '#ff4444';
+            } else {
+                field.style.borderColor = '';
+            }
+        });
+
+        if (!isValid) {
+            if (errorMessage) errorMessage.style.display = 'block';
+            return; 
+        } else {
+            if (errorMessage) errorMessage.style.display = 'none';
+        }
+
+        // Start AJAX submission
+        var originalText = "";
+        if(submitButton) {
+            originalText = submitButton.innerText;
+            submitButton.innerText = 'Enviando...';
+            submitButton.disabled = true;
+        }
+
+        var formData = new FormData(formElement);
+        
+        fetch(formElement.getAttribute('action'), {
+          method: 'POST',
+          body: formData
+        })
+        .then(function(response) {
+            // Check for Captcha/Challenge redirect
+            if (response.redirected && response.url.includes('challenge')) {
+                window.location.href = response.url;
+                return;
+            }
+
+            // Si el servidor da error (401, 404, 500), lanzamos excepción para que el catch haga el envío nativo
+            if (!response.ok) {
+                throw new Error("HTTP Status " + response.status);
+            }
+
+            return response.text();
+        })
+        .then(function(html) {
+            if(!html) return; 
+
+            // Parse response to see if it was success or error
+            var parser = new DOMParser();
+            var doc = parser.parseFromString(html, 'text/html');
+            
+            // Look for success message in response
+            var newSuccess = doc.querySelector('.form-success-message');
+            var newForm = doc.querySelector('form[action^="/contact"]');
+
+            if (newSuccess) {
+                // SUCCESS: Replace form with success message
+                formContainer.innerHTML = newSuccess.outerHTML;
+            } else if (newForm) {
+                // ERROR (Server side): Replace form with new form (containing errors)
+                formContainer.innerHTML = ""; // Clear current
+                formContainer.appendChild(newForm);
+                // Re-initialize listeners if we wanted to support re-submit of error form without refresh
+                // But for now at least it shows the error
+            } else {
+                 if(newSuccess) {
+                     formContainer.innerHTML = newSuccess.outerHTML;
+                 } else {
+                     // Fallback, maybe user was redirected to homepage or similar
+                     window.location.reload();
+                 }
+            }
+        })
+        .catch(function(err) {
+            // FALLBACK: If AJAX fails (e.g. CORS), submit natively
+
+            submitButton.innerText = originalText;
+            submitButton.disabled = false;
+            formElement.removeEventListener('submit', arguments.callee); 
+            formElement.submit(); 
+        })
+        .finally(function() {
+            if(submitButton) {
+                submitButton.innerText = originalText;
+                submitButton.disabled = false;
+            }
+        });
+
+      });
+      
+      // Limpiar error al escribir
+      formFields.forEach(function(field) {
+        field.addEventListener('input', function() {
+            if (this.value) {
+                this.style.borderColor = '';
+            }
+        });
+      });
+    }
+
+    // Force "+" in prefix
+
+    var prefixInput = document.getElementById('ContactPhonePrefix');
+    if (prefixInput) {
+        prefixInput.addEventListener('input', function(e) {
+            // Si el usuario borra el +, lo volvemos a poner
+            if (!this.value.startsWith('+')) {
+                this.value = '+' + this.value.replace(/\+/g, '');
+            }
+        });
+        // Asegurar que empiece con + al cargar (por si acaso el navegador recuerda otro valor)
+        if (!prefixInput.value.startsWith('+')) {
+            prefixInput.value = '+';
+        }
+    }
+
+    // Initialize
+
+    calculate();
+
+  })();
+</script>
+
+
+
+{% schema %}
+{
+  "name": "Migration Calculator",
+  "tag": "section",
+  "class": "section",
+  "settings": [
+    {
+      "type": "text",
+      "id": "heading",
+      "label": "Título Principal",
+      "default": "Calcula el coste de tu migración"
+    },
+    {
+      "type": "text",
+      "id": "subheading",
+      "label": "Subtítulo",
+      "default": "Selecciona el volumen de datos para obtener un precio estimado."
+    },
+    {
+      "type": "header",
+      "content": "Configuración Slider: Clientes"
+    },
+    {
+      "type": "text",
+      "id": "label_customers",
+      "label": "Label Clientes",
+      "default": "Clientes"
+    },
+    {
+      "type": "number",
+      "id": "min_customers",
+      "label": "Mínimo Clientes",
+      "default": 0
+    },
+    {
+      "type": "number",
+      "id": "max_customers",
+      "label": "Máximo Clientes",
+      "default": 25000
+    },
+    {
+      "type": "number",
+      "id": "step_customers",
+      "label": "Step Clientes",
+      "default": 100
+    },
+    {
+      "type": "number",
+      "id": "default_customers",
+      "label": "Valor por Defecto Clientes",
+      "default": 500
+    },
+    {
+      "type": "header",
+      "content": "Configuración Slider: Pedidos"
+    },
+    {
+      "type": "text",
+      "id": "label_orders",
+      "label": "Label Pedidos",
+      "default": "Pedidos"
+    },
+    {
+      "type": "number",
+      "id": "min_orders",
+      "label": "Mínimo Pedidos",
+      "default": 0
+    },
+    {
+      "type": "number",
+      "id": "max_orders",
+      "label": "Máximo Pedidos",
+      "default": 25000
+    },
+    {
+      "type": "number",
+      "id": "step_orders",
+      "label": "Step Pedidos",
+      "default": 100
+    },
+    {
+      "type": "number",
+      "id": "default_orders",
+      "label": "Valor por Defecto Pedidos",
+      "default": 2000
+    },
+    {
+      "type": "header",
+      "content": "Configuración Slider: Productos"
+    },
+    {
+      "type": "text",
+      "id": "label_products",
+      "label": "Label Productos",
+      "default": "Productos"
+    },
+    {
+      "type": "number",
+      "id": "min_products",
+      "label": "Mínimo Productos",
+      "default": 0
+    },
+    {
+      "type": "number",
+      "id": "max_products",
+      "label": "Máximo Productos",
+      "default": 25000
+    },
+    {
+      "type": "number",
+      "id": "step_products",
+      "label": "Step Productos",
+      "default": 50
+    },
+    {
+      "type": "number",
+      "id": "default_products",
+      "label": "Valor por Defecto Productos",
+      "default": 100
+    },
+    {
+      "type": "header",
+      "content": "Textos del Formulario"
+    },
+    {
+      "type": "text",
+      "id": "button_text",
+      "label": "Texto del Botón",
+      "default": "Solicitar Presupuesto"
+    },
+    {
+      "type": "textarea",
+      "id": "success_message_with_price",
+      "label": "Mensaje de Éxito (con precio)",
+      "default": "¡Solicitud Recibida! Hemos recibido tus datos correctamente. Te contactaremos en breve con la propuesta detallada."
+    },
+    {
+      "type": "textarea",
+      "id": "success_message_custom",
+      "label": "Mensaje de Éxito (Custom Quote)",
+      "default": "¡Solicitud Recibida! Por el volumen de datos, te contactaremos por email con un presupuesto personalizado a medida."
+    },
+    {
+      "type": "text",
+      "id": "custom_msg_text",
+      "label": "Mensaje para Custom Quote (en calculadora)",
+      "default": "Contáctanos para un plan a medida (+20k items)"
+    }
+  ],
+  "blocks": [
+    {
+      "type": "price_tier",
+      "name": "Tramo de Precio",
+      "limit": 10,
+      "settings": [
+        {
+          "type": "number",
+          "id": "limit",
+          "label": "Límite superior (Hasta X items)",
+          "default": 100
+        },
+        {
+          "type": "number",
+          "id": "price",
+          "label": "Precio (€)",
+          "default": 499
+        }
+      ]
+    },
+    {
+      "type": "country_adjustment",
+      "name": "Ajuste por País",
+      "limit": 20,
+      "settings": [
+        {
+          "type": "text",
+          "id": "country_code",
+          "label": "Código ISO del País (ej: US, GB, MX)",
+          "default": "US",
+          "info": "Código de 2 letras del país"
+        },
+        {
+          "type": "number",
+          "id": "price_adjustment",
+          "label": "Ajuste de Precio (%)",
+          "default": 20,
+          "info": "Porcentaje de incremento. Ej: 20 = +20%"
+        },
+        {
+          "type": "select",
+          "id": "currency",
+          "label": "Moneda Local",
+          "options": [
+            {"value": "EUR", "label": "Euro (€)"},
+            {"value": "USD", "label": "US Dollar ($)"},
+            {"value": "GBP", "label": "British Pound (£)"},
+            {"value": "CAD", "label": "Canadian Dollar (CAD $)"},
+            {"value": "AUD", "label": "Australian Dollar (AUD $)"},
+            {"value": "MXN", "label": "Mexican Peso (MX $)"}
+          ],
+          "default": "USD"
+        }
+      ]
+    }
+  ],
+  "presets": [
+    {
+      "name": "Migration Cost Calculator",
+      "blocks": [
+        {"type": "price_tier", "settings": {"limit": 100, "price": 499}},
+        {"type": "price_tier", "settings": {"limit": 500, "price": 799}},
+        {"type": "price_tier", "settings": {"limit": 1000, "price": 999}},
+        {"type": "price_tier", "settings": {"limit": 2000, "price": 1250}},
+        {"type": "price_tier", "settings": {"limit": 5000, "price": 1999}},
+        {"type": "price_tier", "settings": {"limit": 10000, "price": 2499}},
+        {"type": "price_tier", "settings": {"limit": 20000, "price": 3999}},
+        {"type": "country_adjustment", "settings": {"country_code": "US", "price_adjustment": 20, "currency": "USD"}},
+        {"type": "country_adjustment", "settings": {"country_code": "GB", "price_adjustment": 15, "currency": "GBP"}},
+        {"type": "country_adjustment", "settings": {"country_code": "AU", "price_adjustment": 25, "currency": "AUD"}}
+      ]
+    }
+  ]
+}
+{% endschema %}
