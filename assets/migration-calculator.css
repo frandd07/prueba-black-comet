@@ -1,13 +1,15 @@
   .section-migration-calculator {
-    padding-top: 60px;
-    padding-bottom: 60px;
-    background-color: var(--calc-bg-color, #0b0b0b) !important;
-    color: var(--calc-text-color, #ffffff) !important;
+    padding: 60px 20px;
+    background-color: var(--calc-bg-color, #0b0b0b);
+    color: var(--calc-text-color, #ffffff);
+    min-height: 100vh;
+    box-sizing: border-box;
   }
   .calculator-wrapper {
     max-width: 1200px;
     margin: 0 auto;
-    padding: 0 20px;
+    width: 100%;
+    box-sizing: border-box;
   }
   .calculator-header {
     text-align: center;
