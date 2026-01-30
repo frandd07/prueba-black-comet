@@ -17,6 +17,10 @@
     --calc-button-bg: {{ section.settings.button_bg_color | default: '#ffffff' }};
     --calc-button-text: {{ section.settings.button_text_color | default: '#000000' }};
     --calc-button-hover: {{ section.settings.button_hover_color | default: '#00ff88' }};
+    --calc-form-bg: {{ section.settings.form_bg_color | default: '#121212' }};
+    --calc-form-border: {{ section.settings.form_border_color | default: '#333' }};
+    --calc-input-bg: {{ section.settings.input_bg_color | default: '#1a1a1a' }};
+    --calc-input-border: {{ section.settings.input_border_color | default: '#444' }};
   }
 </style>
 
@@ -616,6 +620,34 @@
       "id": "button_hover_color",
       "label": "Color del Botón al Hover",
       "default": "#00ff88"
+    },
+    {
+      "type": "header",
+      "content": "Colores del Formulario"
+    },
+    {
+      "type": "color",
+      "id": "form_bg_color",
+      "label": "Fondo del Formulario",
+      "default": "#121212"
+    },
+    {
+      "type": "color",
+      "id": "form_border_color",
+      "label": "Borde del Formulario",
+      "default": "#333333"
+    },
+    {
+      "type": "color",
+      "id": "input_bg_color",
+      "label": "Fondo de Campos",
+      "default": "#1a1a1a"
+    },
+    {
+      "type": "color",
+      "id": "input_border_color",
+      "label": "Borde de Campos",
+      "default": "#444444"
     },
     {
       "type": "header",

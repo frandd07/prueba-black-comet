@@ -97,8 +97,8 @@
   /* Formulario */
   .form-container {
     padding: 40px;
-    background-color: #121212;
-    border: 1px solid #333;
+    background-color: var(--calc-form-bg, #121212);
+    border: 1px solid var(--calc-form-border, #333);
     border-radius: 12px;
   }
   .form-success-message {
@@ -136,8 +136,8 @@
   .form-field input, .form-field select {
     width: 100%;
     padding: 14px;
-    background-color: #222;
-    border: 1px solid #444;
+    background-color: var(--calc-input-bg, #1a1a1a);
+    border: 1px solid var(--calc-input-border, #444);
     border-radius: 6px;
     color: #fff;
     font-size: 1rem;
