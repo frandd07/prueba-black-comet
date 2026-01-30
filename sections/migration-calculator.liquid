@@ -9,6 +9,17 @@
 {% # Importacion de assets %}
 {{ 'migration-calculator.css' | asset_url | stylesheet_tag }}
 
+<style>
+  .section-migration-calculator {
+    --calc-bg-color: {{ section.settings.background_color | default: '#0b0b0b' }};
+    --calc-text-color: {{ section.settings.text_color | default: '#ffffff' }};
+    --calc-accent-color: {{ section.settings.accent_color | default: '#00ff88' }};
+    --calc-button-bg: {{ section.settings.button_bg_color | default: '#ffffff' }};
+    --calc-button-text: {{ section.settings.button_text_color | default: '#000000' }};
+    --calc-button-hover: {{ section.settings.button_hover_color | default: '#00ff88' }};
+  }
+</style>
+
 <div class="page-width section-migration-calculator">
   <div class="calculator-wrapper">
     
@@ -70,13 +81,7 @@
             class="calculator-range">
         </div>
 
-        <!-- CAJA DE PRECIO -->
-        <div class="price-box">
-          <h3>Precio Estimado:</h3>
-          <div id="final-price" class="price-amount">--- €</div>
-          <p id="price-note" class="price-note"></p>
-          <p id="custom-msg" class="custom-quote-msg">{{ section.settings.custom_msg_text }}</p>
-        </div>
+
       </div>
 
       <!-- COLUMNA DERECHA: FORMULARIO -->
@@ -85,6 +90,7 @@
           {% if form.posted_successfully? %}
             <div class="form-success-message">
               <h3>¡Solicitud Recibida!</h3>
+              <div id="success-price-display"></div>
               <p id="success-message-text">{{ section.settings.success_message_with_price }}</p>
             </div>
           {% else %}
@@ -95,17 +101,26 @@
               <input type="email" id="ContactEmail" name="contact[email]" placeholder="tu@email.com" required>
             </div>
             
+            
             <div class="form-field">
               <label for="ContactPhone">Teléfono *</label>
               <div class="phone-group">
-                <input type="text" id="ContactPhonePrefix" name="contact[phone_prefix]" value="+" placeholder="+34" required>
+                <select id="ContactCountryCode" name="contact[phone_prefix]" class="country-selector" required>
+                  {% for block in section.blocks %}
+                    {% if block.type == 'phone_country' %}
+                      <option value="{{ block.settings.phone_code }}">{{ block.settings.flag_emoji }} {{ block.settings.phone_code }}</option>
+                    {% endif %}
+                  {% endfor %}
+                </select>
                 <input type="tel" id="ContactPhone" name="contact[phone]" placeholder="600 000 000" required>
               </div>
             </div>
+
             
             <div class="form-field">
               <label for="ContactWebsite">Web Actual *</label>
               <input type="text" id="ContactWebsite" name="contact[website]" placeholder="www.mitienda.com" required>
+              <small id="website-error" style="color: #ff4444; display: none;">Por favor, introduce una URL válida (ej: www.mitienda.com)</small>
             </div>
             
             <div class="form-field">
@@ -149,7 +164,6 @@
   </div>
 </div>
 
-<!-- LÓGICA JAVASCRIPT -->
 <script>
   (function() {
     
@@ -199,29 +213,21 @@
     };
 
     // Country Adjustments
-
     var countryPriceAdjustments = [
       {% for block in section.blocks %}
         {% if block.type == 'country_adjustment' %}
         {
-          countryCode: "{{ block.settings.countrycode | default: 'US' }}",
-          adjustment: {{ block.settings.priceadjustment | default: 0 }},
-          currency: "{{ block.settings.currency | default: 'USD' }}"
+          countryCode: "{{ block.settings.country_code | default: 'US' }}",
+          adjustment: {{ block.settings.price_adjustment | default: 0 }}
         }{% unless forloop.last %},{% endunless %}
         {% endif %}
       {% endfor %}
     ];
 
-    // User Country Detection
-    var userCountry = 'ES'; // Default Spain
+    var userCountry = '{{ localization.country.iso_code | default: "ES" }}';
     var userCurrency = 'EUR';
     var priceMultiplier = 1.0;
 
-    if (typeof Shopify !== 'undefined' && Shopify.country) {
-      userCountry = Shopify.country;
-    }
-
-    // Find custom adjustment for country
     var countryConfig = null;
     for (var i = 0; i < countryPriceAdjustments.length; i++) {
       if (countryPriceAdjustments[i].countryCode === userCountry) {
@@ -232,13 +238,13 @@
 
     if (countryConfig) {
       priceMultiplier = 1 + (countryConfig.adjustment / 100);
-      userCurrency = countryConfig.currency;
+      userCurrency = countryToCurrency[userCountry] || 'EUR';
     } else {
       userCurrency = countryToCurrency[userCountry] || 'EUR';
     }
 
-    // DOM Elements
 
+    // DOM Elements
     var inputs = {
       customers: document.getElementById('range-customers'),
       orders: document.getElementById('range-orders'),
@@ -248,10 +254,7 @@
     var displays = {
       customers: document.getElementById('display-customers'),
       orders: document.getElementById('display-orders'),
-      products: document.getElementById('display-products'),
-      price: document.getElementById('final-price'),
-      msg: document.getElementById('custom-msg'),
-      note: document.getElementById('price-note')
+      products: document.getElementById('display-products')
     };
 
     var hidden = {
@@ -260,20 +263,20 @@
       products: document.getElementById('hidden-products'),
       price: document.getElementById('hidden-price'),
       country: document.getElementById('hidden-country'),
-      localPrice: document.getElementById('hidden-local-price')
+      localPrice: document.getElementById('hidden-local-price'),
+      isCustom: document.getElementById('hidden-is-custom')
     };
 
     // Validation
-    if (!inputs.customers || !displays.price) {
+    if (!inputs.customers) {
       return;
     }
 
     // Guardar país en hidden field
     if (hidden.country) hidden.country.value = userCountry;
 
-    // Main Calculation Function
 
-    function calculate() {
+    function updateDisplays() {
       var vCust = parseInt(inputs.customers.value) || 0;
       var vOrd = parseInt(inputs.orders.value) || 0;
       var vProd = parseInt(inputs.products.value) || 0;
@@ -287,6 +290,13 @@
       if (hidden.customers) hidden.customers.value = vCust;
       if (hidden.orders) hidden.orders.value = vOrd;
       if (hidden.products) hidden.products.value = vProd;
+    }
+
+    // Calculate Price (Called only on form submit)
+    function calculatePrice() {
+      var vCust = parseInt(inputs.customers.value) || 0;
+      var vOrd = parseInt(inputs.orders.value) || 0;
+      var vProd = parseInt(inputs.products.value) || 0;
 
       // Calcular precio base en EUR
       var maxVal = Math.max(vCust, vOrd, vProd);
@@ -310,37 +320,62 @@
         // Obtener símbolo de moneda
         var currencySymbol = currencySymbols[userCurrency] || userCurrency;
 
-        // Mostrar precio
-        displays.price.innerText = localPrice.toLocaleString() + ' ' + currencySymbol;
-        if (displays.msg) displays.msg.style.display = 'none';
-
-        if (displays.note) {
-          displays.note.style.display = 'none';
-        }
-
-
         // Hidden fields
         if (hidden.price) hidden.price.value = adjustedPrice + " EUR (Base: " + priceFound + " EUR)";
         if (hidden.localPrice) hidden.localPrice.value = localPrice + " " + userCurrency;
+        if (hidden.isCustom) hidden.isCustom.value = "false";
 
+        return {
+          isCustom: false,
+          displayPrice: localPrice.toLocaleString() + ' ' + currencySymbol,
+          localPrice: localPrice,
+          currency: userCurrency
+        };
       } else {
         // Custom quote
-        displays.price.innerText = "";
-        if (displays.msg) displays.msg.style.display = 'block';
-        if (displays.note) displays.note.style.display = 'none';
         if (hidden.price) hidden.price.value = "Custom Quote (Over Limit)";
         if (hidden.localPrice) hidden.localPrice.value = "Custom Quote";
-      }
+        if (hidden.isCustom) hidden.isCustom.value = "true";
 
+        return {
+          isCustom: true,
+          displayPrice: null
+        };
+      }
     }
 
-    // Event Listeners
-    inputs.customers.addEventListener('input', calculate);
-    inputs.orders.addEventListener('input', calculate);
-    inputs.products.addEventListener('input', calculate);
+    // Event Listeners for Sliders (Only update display, not price)
+    inputs.customers.addEventListener('input', updateDisplays);
+    inputs.orders.addEventListener('input', updateDisplays);
+    inputs.products.addEventListener('input', updateDisplays);
+
+    // URL Validation
+    var websiteInput = document.getElementById('ContactWebsite');
+    var websiteError = document.getElementById('website-error');
+    
+    if (websiteInput) {
+      // Validate website: accepts domains with or without http(s)://
+      // Examples: mitienda.com, www.mitienda.com, https://mitienda.com
+      var websiteRegex = /^(https?:\/\/)?([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(\/.*)?$/;
+      
+      websiteInput.addEventListener('blur', function() {
+        var value = this.value.trim();
+        if (value && !websiteRegex.test(value)) {
+          if (websiteError) websiteError.style.display = 'block';
+          this.style.borderColor = '#ff4444';
+        } else {
+          if (websiteError) websiteError.style.display = 'none';
+          this.style.borderColor = '';
+        }
+      });
+
+      websiteInput.addEventListener('input', function() {
+        if (websiteError) websiteError.style.display = 'none';
+        this.style.borderColor = '';
+      });
+    }
 
     // Form Validation & AJAX Submission
-
     var formElement = document.querySelector('form[action^="/contact"]');
     var submitButton = document.getElementById('calculator-submit-btn');
     var errorMessage = document.getElementById('calculator-form-error');
@@ -363,12 +398,25 @@
             }
         });
 
+
+        var websiteRegex = /^(https?:\/\/)?([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(\/.*)?$/;
+        if (websiteInput && websiteInput.value && !websiteRegex.test(websiteInput.value.trim())) {
+          isValid = false;
+          websiteInput.style.borderColor = '#ff4444';
+          if (websiteError) websiteError.style.display = 'block';
+        }
+
         if (!isValid) {
             if (errorMessage) errorMessage.style.display = 'block';
             return; 
         } else {
             if (errorMessage) errorMessage.style.display = 'none';
         }
+
+        var priceData = calculatePrice();
+        
+        localStorage.setItem('calculatorPriceData', JSON.stringify(priceData));
+        localStorage.setItem('calculatorCustomMsg', '{{ section.settings.custom_msg_text | escape }}');
 
         // Start AJAX submission
         var originalText = "";
@@ -412,12 +460,31 @@
             if (newSuccess) {
                 // SUCCESS: Replace form with success message
                 formContainer.innerHTML = newSuccess.outerHTML;
+                
+                // Display price in success message
+                var successPriceDisplay = document.getElementById('success-price-display');
+                var successMessageText = document.getElementById('success-message-text');
+                
+                if (successPriceDisplay && priceData) {
+                  console.log('Displaying price in success message:', priceData);
+                  if (priceData.isCustom) {
+                    successPriceDisplay.innerHTML = '<p style="font-size: 1.5rem; font-weight: bold; color: var(--calc-accent-color, #00ff88); margin: 20px 0;">' + localStorage.getItem('calculatorCustomMsg') + '</p>';
+                    if (successMessageText) {
+                      successMessageText.innerText = '{{ section.settings.success_message_custom | escape }}';
+                    }
+                  } else {
+                    successPriceDisplay.innerHTML = '<div style="margin: 20px 0;"><p style="font-size: 0.9rem; color: #888; text-transform: uppercase; margin-bottom: 10px;">Precio Estimado:</p><p style="font-size: 3rem; font-weight: 800; color: var(--calc-accent-color, #00ff88);">' + priceData.displayPrice + '</p></div>';
+                  }
+                }
+                
+                // Clear local storage
+                localStorage.removeItem('calculatorPriceData');
+                localStorage.removeItem('calculatorCustomMsg');
+                
             } else if (newForm) {
                 // ERROR (Server side): Replace form with new form (containing errors)
                 formContainer.innerHTML = ""; // Clear current
                 formContainer.appendChild(newForm);
-                // Re-initialize listeners if we wanted to support re-submit of error form without refresh
-                // But for now at least it shows the error
             } else {
                  if(newSuccess) {
                      formContainer.innerHTML = newSuccess.outerHTML;
@@ -429,7 +496,6 @@
         })
         .catch(function(err) {
             // FALLBACK: If AJAX fails (e.g. CORS), submit natively
-
             submitButton.innerText = originalText;
             submitButton.disabled = false;
             formElement.removeEventListener('submit', arguments.callee); 
@@ -445,6 +511,7 @@
       });
       
       // Limpiar error al escribir
+      var formFields = document.querySelectorAll('.form-field input, .form-field select');
       formFields.forEach(function(field) {
         field.addEventListener('input', function() {
             if (this.value) {
@@ -454,28 +521,41 @@
       });
     }
 
-    // Force "+" in prefix
 
-    var prefixInput = document.getElementById('ContactPhonePrefix');
-    if (prefixInput) {
-        prefixInput.addEventListener('input', function(e) {
-            // Si el usuario borra el +, lo volvemos a poner
-            if (!this.value.startsWith('+')) {
-                this.value = '+' + this.value.replace(/\+/g, '');
+
+    // Initialize displays
+    updateDisplays();
+    
+
+    var successPriceDisplay = document.getElementById('success-price-display');
+    var successMessageText = document.getElementById('success-message-text');
+    
+    if (successPriceDisplay) {
+      var storedPriceData = localStorage.getItem('calculatorPriceData');
+      var storedCustomMsg = localStorage.getItem('calculatorCustomMsg');
+      
+      if (storedPriceData) {
+        try {
+          var priceData = JSON.parse(storedPriceData);
+          
+          if (priceData.isCustom) {
+            successPriceDisplay.innerHTML = '<p style="font-size: 1.5rem; font-weight: bold; color: var(--calc-accent-color, #00ff88); margin: 20px 0;">' + (storedCustomMsg || '{{ section.settings.custom_msg_text | escape }}') + '</p>';
+            if (successMessageText) {
+              successMessageText.innerText = '{{ section.settings.success_message_custom | escape }}';
             }
-        });
-        // Asegurar que empiece con + al cargar (por si acaso el navegador recuerda otro valor)
-        if (!prefixInput.value.startsWith('+')) {
-            prefixInput.value = '+';
-        }
+          } else {
+            successPriceDisplay.innerHTML = '<div style="margin: 20px 0;"><p style="font-size: 0.9rem; color: #888; text-transform: uppercase; margin-bottom: 10px;">Precio Estimado:</p><p style="font-size: 3rem; font-weight: 800; color: var(--calc-accent-color, #00ff88);">' + priceData.displayPrice + '</p></div>';
+          }
+          
+          localStorage.removeItem('calculatorPriceData');
+          localStorage.removeItem('calculatorCustomMsg');
+        } catch (e) {}
+      }
     }
-
-    // Initialize
-
-    calculate();
 
   })();
 </script>
+
 
 
 
@@ -496,6 +576,46 @@
       "id": "subheading",
       "label": "Subtítulo",
       "default": "Selecciona el volumen de datos para obtener un precio estimado."
+    },
+    {
+      "type": "header",
+      "content": "Estilos y Colores"
+    },
+    {
+      "type": "color",
+      "id": "background_color",
+      "label": "Color de Fondo",
+      "default": "#0b0b0b"
+    },
+    {
+      "type": "color",
+      "id": "text_color",
+      "label": "Color de Texto",
+      "default": "#ffffff"
+    },
+    {
+      "type": "color",
+      "id": "accent_color",
+      "label": "Color de Acento (Slider/Valores)",
+      "default": "#00ff88"
+    },
+    {
+      "type": "color",
+      "id": "button_bg_color",
+      "label": "Color de Fondo del Botón",
+      "default": "#ffffff"
+    },
+    {
+      "type": "color",
+      "id": "button_text_color",
+      "label": "Color de Texto del Botón",
+      "default": "#000000"
+    },
+    {
+      "type": "color",
+      "id": "button_hover_color",
+      "label": "Color del Botón al Hover",
+      "default": "#00ff88"
     },
     {
       "type": "header",
@@ -607,19 +727,19 @@
       "type": "text",
       "id": "button_text",
       "label": "Texto del Botón",
-      "default": "Solicitar Presupuesto"
+      "default": "Calcular Presupuesto"
     },
     {
       "type": "textarea",
       "id": "success_message_with_price",
       "label": "Mensaje de Éxito (con precio)",
-      "default": "¡Solicitud Recibida! Hemos recibido tus datos correctamente. Te contactaremos en breve con la propuesta detallada."
+      "default": "Hemos recibido tus datos correctamente. Te contactaremos en breve con la propuesta detallada."
     },
     {
       "type": "textarea",
       "id": "success_message_custom",
       "label": "Mensaje de Éxito (Custom Quote)",
-      "default": "¡Solicitud Recibida! Por el volumen de datos, te contactaremos por email con un presupuesto personalizado a medida."
+      "default": "Por el volumen de datos, te contactaremos por email con un presupuesto personalizado a medida."
     },
     {
       "type": "text",
@@ -666,20 +786,34 @@
           "label": "Ajuste de Precio (%)",
           "default": 20,
           "info": "Porcentaje de incremento. Ej: 20 = +20%"
+        }
+      ]
+    },
+    {
+      "type": "phone_country",
+      "name": "País de Teléfono",
+      "limit": 50,
+      "settings": [
+        {
+          "type": "text",
+          "id": "flag_emoji",
+          "label": "Bandera (Emoji)",
+          "default": "🇪🇸",
+          "info": "Emoji de la bandera del país (ej: 🇪🇸, 🇺🇸, 🇬🇧)"
         },
         {
-          "type": "select",
-          "id": "currency",
-          "label": "Moneda Local",
-          "options": [
-            {"value": "EUR", "label": "Euro (€)"},
-            {"value": "USD", "label": "US Dollar ($)"},
-            {"value": "GBP", "label": "British Pound (£)"},
-            {"value": "CAD", "label": "Canadian Dollar (CAD $)"},
-            {"value": "AUD", "label": "Australian Dollar (AUD $)"},
-            {"value": "MXN", "label": "Mexican Peso (MX $)"}
-          ],
-          "default": "USD"
+          "type": "text",
+          "id": "phone_code",
+          "label": "Código Telefónico",
+          "default": "+34",
+          "info": "Código de teléfono con + (ej: +34, +1, +44)"
+        },
+        {
+          "type": "text",
+          "id": "country_name",
+          "label": "Nombre del País",
+          "default": "España",
+          "info": "Nombre del país para referencia"
         }
       ]
     }
@@ -695,9 +829,19 @@
         {"type": "price_tier", "settings": {"limit": 5000, "price": 1999}},
         {"type": "price_tier", "settings": {"limit": 10000, "price": 2499}},
         {"type": "price_tier", "settings": {"limit": 20000, "price": 3999}},
-        {"type": "country_adjustment", "settings": {"country_code": "US", "price_adjustment": 20, "currency": "USD"}},
-        {"type": "country_adjustment", "settings": {"country_code": "GB", "price_adjustment": 15, "currency": "GBP"}},
-        {"type": "country_adjustment", "settings": {"country_code": "AU", "price_adjustment": 25, "currency": "AUD"}}
+        {"type": "country_adjustment", "settings": {"country_code": "US", "price_adjustment": 20}},
+        {"type": "country_adjustment", "settings": {"country_code": "GB", "price_adjustment": 15}},
+        {"type": "country_adjustment", "settings": {"country_code": "AU", "price_adjustment": 25}},
+        {"type": "phone_country", "settings": {"flag_emoji": "🇪🇸", "phone_code": "+34", "country_name": "España"}},
+        {"type": "phone_country", "settings": {"flag_emoji": "🇺🇸", "phone_code": "+1", "country_name": "Estados Unidos"}},
+        {"type": "phone_country", "settings": {"flag_emoji": "🇬🇧", "phone_code": "+44", "country_name": "Reino Unido"}},
+        {"type": "phone_country", "settings": {"flag_emoji": "🇫🇷", "phone_code": "+33", "country_name": "Francia"}},
+        {"type": "phone_country", "settings": {"flag_emoji": "🇩🇪", "phone_code": "+49", "country_name": "Alemania"}},
+        {"type": "phone_country", "settings": {"flag_emoji": "🇮🇹", "phone_code": "+39", "country_name": "Italia"}},
+        {"type": "phone_country", "settings": {"flag_emoji": "🇵🇹", "phone_code": "+351", "country_name": "Portugal"}},
+        {"type": "phone_country", "settings": {"flag_emoji": "🇲🇽", "phone_code": "+52", "country_name": "México"}},
+        {"type": "phone_country", "settings": {"flag_emoji": "🇨🇦", "phone_code": "+1", "country_name": "Canadá"}},
+        {"type": "phone_country", "settings": {"flag_emoji": "🇦🇺", "phone_code": "+61", "country_name": "Australia"}}
       ]
     }
   ]
